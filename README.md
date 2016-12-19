@@ -1,2 +1,4 @@
-# petoy
-a PE file packer
+# PE Toy
+
+
+elemeta <elemeta47 at gmail dot com>
