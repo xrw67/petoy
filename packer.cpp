@@ -1,4 +1,5 @@
 #include "packer.h"
+#include "aPLib\lib\coff\aplib.h"
 
 namespace petoy {
 
@@ -249,8 +250,8 @@ EC Packer::pack(const std::string &savename)
 	PTOY_SHELL_ARGS shellArgs;
 	size_t shellSize, shellCodeSize, shellDataSize = 0;
 	char *shellBase, *shellDataPtr;
-	
-	// 计算大小
+
+	// 解压后的总大小
 	shellDataSize = getBlockListSize();
 	shellCodeSize = (size_t)&ToyShellEnd - (size_t)&ToyShellBegin;
 	shellSize = alignSize(shellCodeSize, 4) + shellDataSize;
@@ -258,13 +259,27 @@ EC Packer::pack(const std::string &savename)
 	// 复制数据
 	shellBase = new char[shellSize];
 	shellDataPtr = shellBase + alignSize(shellCodeSize, 4);
-
 	memset(shellBase, 0, shellSize);
 	memcpy(shellBase, &ToyShellBegin, shellCodeSize);
 	mergeBlock(shellDataPtr, &shellDataSize);
+	
+	shellArgs = (PTOY_SHELL_ARGS)(shellBase + (size_t)&ToyShellArgs - (size_t)&ToyShellBegin);
+
+	// 压缩数据
+	char *packStart =  shellBase + shellArgs->ToyPackVAddr;
+	size_t packBufSize = shellSize - shellArgs->ToyPackVAddr;
+	char *workmem = new char[aP_workmem_size(packBufSize)];
+	char *compressed = new char[aP_max_packed_size(packBufSize)];
+	size_t outlength = aP_pack(packStart, compressed, packBufSize, workmem, NULL, NULL);
+	if (outlength == APLIB_ERROR)
+		goto out;
+
+	memcpy(packStart, compressed, outlength);
+	size_t shellRawSize = (size_t)packStart - (size_t)shellBase + outlength;
+
+	shellArgs->ToyPackSize = outlength;
 
 	// 修正壳的数据
-	shellArgs = (PTOY_SHELL_ARGS)(shellBase + (size_t)&ToyShellArgs - (size_t)&ToyShellBegin);
 	shellArgs->OrigImageBase = _ntHeaders->OptionalHeader.ImageBase;
 	shellArgs->OrigEntryPoint = _ntHeaders->OptionalHeader.AddressOfEntryPoint;
 	
@@ -282,7 +297,7 @@ EC Packer::pack(const std::string &savename)
 	shellHdr->PointerToLinenumbers = 0;
 	shellHdr->PointerToRawData = secPos->PointerToRawData + secPos->SizeOfRawData;
 	shellHdr->PointerToRelocations = 0;
-	shellHdr->SizeOfRawData = alignSize(shellSize, fileAlign);
+	shellHdr->SizeOfRawData = alignSize(shellRawSize, fileAlign);
 	shellHdr->VirtualAddress = newEntryPoint;
 	shellHdr->Characteristics = 0xE0000040; // RWX + contains init data
 
@@ -306,12 +321,13 @@ EC Packer::pack(const std::string &savename)
 			firstThunk[j].u1.Ordinal += importDir->VirtualAddress;
 		}
 	}
+
 	printf("Add shellcode done!\n");
 
-	err = fwriteFixed(f, shellBase, shellSize);
+	err = fwriteFixed(f, shellBase, shellRawSize);
 	if (SUCCESS != err)
 		goto out;
-	err = fwriteZero(f, shellHdr->SizeOfRawData - shellSize);
+	err = fwriteZero(f, shellHdr->SizeOfRawData - shellRawSize);
 	if (SUCCESS != err)
 		goto out;
 
@@ -335,10 +351,6 @@ EC Packer::pack(const std::string &savename)
 			goto out;
 		printf("Add extend data done!\n");
 	}
-
-	//// 去掉ASLR
-	//if (isExe)
-	//	_ntHeaders->FileHeader.Characteristics &= (~IMAGE_FILE_RELOCS_STRIPPED);
 
 	fseek(f, 0, SEEK_SET);
 	err = fwriteFixed(f, _imageBase, sizeOfHeader);

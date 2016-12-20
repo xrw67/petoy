@@ -17,13 +17,13 @@ int main(int argc, char *argv[])
 
 	err = p.load(argv[1]);
 	if (err != SUCCESS)
-		printf("Load %s error: %s(%d)\n", argv[1], errString(err), err);
+		printf("Load %s error: %s(%d)\n", argv[1], errString(err).c_str(), err);
 	else
 		printf("Load %s success!\n", argv[1]);
 
 	err = p.pack(std::string(argv[1]) + ".new.exe");
 	if (err != SUCCESS)
-		printf("Pack %s error: %s(%d)\n", argv[1], errString(err), err);
+		printf("Pack %s error: %s(%d)\n", argv[1], errString(err).c_str(), err);
 	else
 		printf("Pack %s success!\n", argv[1]);
 

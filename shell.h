@@ -27,10 +27,12 @@ extern "C" DWORD ToyShellImportEnd;
 extern "C" DWORD ToyShellArgs;
 
 typedef struct _TOY_SHELL_ARGS{
-	DWORD ToyBlockVAddr;   // 0x00
-	DWORD ToyBlockSize;    // 0x04
-	DWORD OrigImageBase;   // 0x08
-	DWORD OrigEntryPoint;  // 0x0c
+	DWORD ToyPackVAddr;    // 0x00
+	DWORD ToyPackSize;     // 0x04
+	DWORD ToyBlockVAddr;   // 0x08
+	DWORD ToyBlockSize;    // 0x0c
+	DWORD OrigImageBase;   // 0x10
+	DWORD OrigEntryPoint;  // 0x14
 } TOY_SHELL_ARGS, *PTOY_SHELL_ARGS;
 
 //

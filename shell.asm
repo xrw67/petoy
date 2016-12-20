@@ -89,23 +89,31 @@ ToyImportTable	 dd	AddressFirst - ToyImportTable     ; OriginalFirstThunk
 AddressFirst	 dd	FirstFunction - ToyImportTable     ; 指向IMAGE_THUNK_DATA
 AddressSecond	 dd	SecondFunction - ToyImportTable    ; 指向IMAGE_THUNK_DATA
 AddressThird	 dd	ThirdFunction - ToyImportTable     ; 指向IMAGE_THUNK_DATA
+AddressFourth    dd FourthFunction - ToyImportTable    ; 指向IMAGE_THUNK_DATA
+AddressFifth     dd FifthFunction - ToyImportTable     ; 指向IMAGE_THUNK_DATA
 		     dd	0
 
 DllName		 db	'KERNEL32.dll'
 		     dw	0
 
-FirstFunction	 dw	0	
-		     db	'GetProcAddress', 0
-SecondFunction	 dw	0
-		     db	'GetModuleHandleA', 0
-ThirdFunction	 dw	0
-		     db	'LoadLibraryA', 0
+FirstFunction   dw	0	
+		        db	'GetProcAddress', 0
+SecondFunction  dw	0
+		        db	'GetModuleHandleA', 0
+ThirdFunction   dw	0
+		        db	'LoadLibraryA', 0
+FourthFunction  dw 0
+                db  'VirtualAlloc', 0
+FifthFunction   dw 0
+                db  'VirtualFree', 0
 ToyShellImportEnd label dword
 
 ; -------------------------------------------------------------
 ; 壳的变量
 ; -------------------------------------------------------------
 ToyShellArgs label dword
+toyPackVAddr    dd next1 - ToyShellBegin
+toyPackSize     dd 0
 toyBlockVAddr   dd 0
 toyBlockSize    dd 0
 origImageBase   dd 0
@@ -115,6 +123,145 @@ origEntryPoint  dd 0
 isFirstRun      dd 0
 imageBase       dd 0
 
+ToyMemCpy proc dst:ptr byte, src:ptr byte, len:dword
+	mov  edi, [dst]
+	mov  esi, [src]
+	mov  ecx, [len]
+
+	shr  ecx, 2 ; 按DWORD复制
+	rep movsd
+
+	mov ecx, [len] ; 复制剩余的小于DWORD的部分
+	and ecx, 3
+	rep movsb
+
+	mov eax, [dst]
+	ret
+ToyMemCpy endp
+
+; ------------------------------------------------------
+; aPLib
+;-------------------------------------------------------
+
+aP_depack_asm:
+    ; aP_depack_asm(const void *source, void *destination)
+
+    _ret$  equ 7*4
+    _src$  equ 8*4 + 4
+    _dst$  equ 8*4 + 8
+
+    pushad
+
+    mov    esi, [esp + _src$] ; C calling convention
+    mov    edi, [esp + _dst$]
+
+    cld
+    mov    dl, 80h
+    xor    ebx,ebx
+
+literal:
+    movsb
+    mov    bl, 2
+nexttag:
+    call   getbit
+    jnc    literal
+
+    xor    ecx, ecx
+    call   getbit
+    jnc    codepair
+    xor    eax, eax
+    call   getbit
+    jnc    shortmatch
+    mov    bl, 2
+    inc    ecx
+    mov    al, 10h
+  getmorebits:
+    call   getbit
+    adc    al, al
+    jnc    getmorebits
+    jnz    domatch
+    stosb
+    jmp    nexttag
+codepair:
+    call   getgamma_no_ecx
+    sub    ecx, ebx
+    jnz    normalcodepair
+    call   getgamma
+    jmp    domatch_lastpos
+
+shortmatch:
+    lodsb
+    shr    eax, 1
+    jz     donedepacking
+    adc    ecx, ecx
+    jmp    domatch_with_2inc
+
+normalcodepair:
+    xchg   eax, ecx
+    dec    eax
+    shl    eax, 8
+    lodsb
+    call   getgamma
+
+    cmp    eax, 32000
+    jae    domatch_with_2inc
+    cmp    ah, 5
+    jae    domatch_with_inc
+    cmp    eax, 7fh
+    ja     domatch_new_lastpos
+
+domatch_with_2inc:
+    inc    ecx
+
+domatch_with_inc:
+    inc    ecx
+
+domatch_new_lastpos:
+    xchg   eax, ebp
+domatch_lastpos:
+    mov    eax, ebp
+
+    mov    bl, 1
+
+domatch:
+    push   esi
+    mov    esi, edi
+    sub    esi, eax
+    rep    movsb
+    pop    esi
+    jmp    nexttag
+
+getbit:
+    add    dl, dl
+    jnz    stillbitsleft
+    mov    dl, [esi]
+    inc    esi
+    adc    dl, dl
+  stillbitsleft:
+    ret
+
+getgamma:
+    xor    ecx, ecx
+getgamma_no_ecx:
+    inc    ecx
+  getgammaloop:
+    call   getbit
+    adc    ecx, ecx
+    call   getbit
+    jc     getgammaloop
+    ret
+
+donedepacking:
+    sub    edi, [esp + _dst$]
+    mov    [esp + _ret$], edi ; return unpacked length in eax
+
+    popad
+
+    ret 8h
+
+; ------------------------------------------------------
+; 壳的代码
+; ------------------------------------------------------
 next0:
 	pop  ebp
 	sub  ebp, (ToyImportTable - ToyShellBegin)
@@ -130,6 +277,30 @@ next0:
 	call dword ptr [ebp + (AddressSecond - ToyShellBegin)] ; GetModuleHandle
 	mov [ebp + (imageBase - ToyShellBegin)], eax
 
+	; 解压
+	push PAGE_READWRITE
+	push MEM_COMMIT
+	push dword ptr [ebp + (toyPackSize - ToyShellBegin)]
+	push 0
+	call dword ptr [ebp + (AddressFourth - ToyShellBegin)] ; VirtualAddress
+	push eax
+
+	mov ecx, [ebp + (toyPackSize - ToyShellBegin)]
+	lea esi, [ebp + (next1 - ToyShellBegin)]
+	invoke ToyMemCpy, eax, esi, ecx
+
+	pop  eax
+	lea  esi, [ebp + (next1 - ToyShellBegin)]
+	push esi
+	push eax
+	call aP_depack_asm
+	jmp next1
+
+	; ------------------------------------------------------
+	; 下面部分运行时解压缩
+	; ------------------------------------------------------
+next1:
+	; Anti-Debugger
 	invoke ToyCheckDebugger
 
 	; 处理数据块
@@ -349,22 +520,6 @@ ToyDoBaseReloc proc instance:dword, reloc:dword
 	.endw
 	ret
 ToyDoBaseReloc endp
-
-ToyMemCpy proc dst:ptr byte, src:ptr byte, len:dword
-	mov  edi, [dst]
-	mov  esi, [src]
-	mov  ecx, [len]
-
-	shr  ecx, 2 ; 按DWORD复制
-	rep movsd
-
-	mov ecx, [len] ; 复制剩余的小于DWORD的部分
-	and ecx, 3
-	rep movsb
-
-	mov eax, [dst]
-	ret
-ToyMemCpy endp
 
 ToyZeroMem proc src:ptr byte, len:dword
 	mov  edi, [src]
