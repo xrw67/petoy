@@ -19,10 +19,10 @@
 
 | .petoy段   |
 |------------|
-| EOP        |
+| OEP        |
 | 壳的输入表  |
 | 壳的代码部分 |
 | 壳的数据部分 |
 
 
-elemeta <elemeta47 at gmail dot com>
+elemeta, elemeta47 at gmail dot com.
